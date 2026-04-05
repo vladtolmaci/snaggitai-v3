@@ -1046,6 +1046,7 @@ async def _save_defect(query, context, severity: str, description: str) -> int:
         [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
         [InlineKeyboardButton("✅ Finish this zone", callback_data="after:finishzone")],
         [InlineKeyboardButton("🗑 Delete last defect", callback_data="after:delete")],
+        [InlineKeyboardButton("🏁 Finish inspection & generate PDF", callback_data="after:finish")],
     ]
 
     await query.edit_message_text(
@@ -1085,6 +1086,7 @@ async def _save_defect_msg(update: Update, context, severity: str, description: 
         [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
         [InlineKeyboardButton("✅ Finish this zone", callback_data="after:finishzone")],
         [InlineKeyboardButton("🗑 Delete last defect", callback_data="after:delete")],
+        [InlineKeyboardButton("🏁 Finish inspection & generate PDF", callback_data="after:finish")],
     ]
 
     await update.message.reply_text(
@@ -1153,6 +1155,9 @@ async def after_defect_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.answer("No defects to delete.", show_alert=True)
             return AFTER_DEFECT
 
+    elif action == "finish":
+        return await _try_finish(query, context)
+
     return AFTER_DEFECT
 
 
@@ -1195,25 +1200,16 @@ async def _show_zone_picker_query(query, context, inspection_id: str) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _try_finish(query, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Check if all zones are done, if so generate PDF."""
+    """Finish inspection — auto-mark all zones as done, generate PDF."""
     inspection_id = context.user_data.get("_inspection_id")
     zones = get_zones(inspection_id)
 
-    not_done = [z for z in zones if z["status"] != "done"]
-    if not_done:
-        names = ", ".join(z["name"] for z in not_done)
-        await query.edit_message_text(
-            f"⚠️ <b>Cannot finish yet</b>\n\n"
-            f"These zones are not complete: {names}\n\n"
-            "Finish all zones first, or press the zone to mark it done.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Back to zones", callback_data="zones:start")],
-            ]),
-        )
-        return PICK_ZONE
+    # Auto-mark all non-done zones as done
+    for z in zones:
+        if z["status"] != "done":
+            update_zone(z["id"], status="done")
 
-    # All zones done — generate PDF
+    # Generate PDF
     await query.edit_message_text("⏳ <b>Generating report...</b>\n\nDownloading photos and building PDF...", parse_mode="HTML")
 
     inspection = get_inspection_by_id(inspection_id)
@@ -1315,15 +1311,15 @@ async def _build_pdf(meta: dict, zones: list, sev_counts: dict, total: int, ai_t
             if d.get("severity") == "compliant":
                 continue
             defects.append({
-                "severity": d.get("severity", "minor"),
-                "description": trunc(d.get("description", ""), 80),
+                "sev": d.get("severity", "minor"),
+                "desc": trunc(d.get("description", ""), 80),
                 "photo": d.get("photo_path", ""),
             })
 
         # Build observation for zone
         n = len(defects)
         if n > 0:
-            items = ", ".join(d["description"] for d in defects[:5])
+            items = ", ".join(d["desc"] for d in defects[:5])
             obs = f"The {z['name']} area has {n} comments noted. Comments include {items}. Mentioned comments should be rectified prior to handover."
         else:
             obs = f"Overall, the {z['name']} is in good condition. No comments were noted during inspection."
