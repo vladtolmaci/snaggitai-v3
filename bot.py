@@ -72,7 +72,9 @@ except ImportError:
     DEFECT_DESC, AFTER_DEFECT,                            # 24-25
     # Resume
     RESUME_MENU,                                          # 26
-) = range(27)
+    # Edit defect
+    EDIT_PICK_DEFECT, EDIT_DEFECT_SEV, EDIT_DEFECT_DESC,  # 27-29
+) = range(30)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 PROPERTY_TYPES = ["Apartment", "Villa", "Townhouse", "Penthouse", "Duplex", "Studio", "Office"]
@@ -104,49 +106,537 @@ MEP_CHECKLISTS = {
 }
 
 # ── AI Prompts ───────────────────────────────────────────────────────────────
-DEFECT_ANALYSIS_PROMPT = """You are a professional property snagging inspector in Dubai writing a snagging report.
+DEFECT_ANALYSIS_PROMPT = """You are a certified property snagging inspector performing a new-build handover inspection. You are looking at a photo taken during the inspection. Your job is to identify the ONE specific defect the inspector is documenting.
 
-Analyse this defect photo. Return ONLY raw JSON, no markdown, no code fences:
+STEP 1 — FIND THE INSPECTOR'S FOCUS
+The inspector photographs exactly what they want to flag.
+- A coloured sticker, dot, arrow, tape, or blue painter's tape is placed BY the inspector to mark the defect location. The sticker POINTS TO the defect — the sticker itself is NEVER a defect.
+- If you see a sticker on a wall, the defect is whatever is wrong with the wall AT that spot.
+- If no sticker is visible, the defect is whatever is most prominent and wrong in the photo.
+
+STEP 2 — IDENTIFY WHAT IS ACTUALLY WRONG
+Look ONLY at what you can physically see. Never guess or assume. Ask yourself three questions:
+1. What MATERIAL or ELEMENT am I looking at?
+2. What is WRONG with it?
+3. WHERE exactly on the surface or room is it?
+
+STEP 3 — CLASSIFY INTO ONE CATEGORY
+
+=== PAINT — 16 types ===
+Paint run ................. gravity streak running down vertical surface
+Paint drip ................ dried drop or blob of paint on surface
+Paint splash .............. dots/spots of paint on wrong surface (tile, glass, fixture, floor)
+Paint incomplete .......... area not fully covered, thin edge, missed patch, bare spot visible
+Paint peeling ............. paint lifting or flaking off the substrate
+Paint bubbling ............ raised blisters in paint film
+Paint roller marks ........ visible texture lines from roller application
+Paint colour mismatch ..... different shade between adjacent painted areas
+Paint overspray ........... paint mist on hardware, hinges, handles, glass, tiles
+Paint touch-up visible .... patched area visible as different sheen or texture
+Paint cracking ............ fine network of cracks in paint film (alligator/crocodile pattern)
+Paint stain ............... discoloration, yellowing, or bleed-through in paint
+Paint brush marks ......... visible brush strokes in finished surface
+Paint blistering .......... larger raised areas caused by moisture behind paint
+Paint chalking ............ powdery residue on paint surface (exterior)
+Paint sagging ............. thick area where wet paint slumped before drying
+
+=== SILICONE / SEALANT — 10 types ===
+Silicone gap .............. missing sealant at junction (bath, sink, countertop, window, floor)
+Silicone stained .......... discoloured, yellowed, dirty, mouldy sealant
+Silicone uneven ........... thick/thin/wavy/messy application
+Silicone cracked .......... broken or split sealant line
+Silicone excess ........... too much sealant, smeared on adjacent surfaces
+Silicone missing .......... no sealant where required (wet area junction, window-wall)
+Silicone peeling .......... sealant pulling away from surface, lost adhesion
+Silicone wrong colour ..... sealant colour doesn't match tiles or sanitary ware
+Silicone tooling poor ..... finish not smooth, finger marks, rough texture
+Sealant shrinkage ......... sealant has pulled back from edges leaving narrow gaps
+
+=== TILE — 15 types ===
+Tile crack ................ visible fracture line through tile body
+Tile chip ................. piece broken off edge or corner of tile
+Tile lippage .............. one tile higher than adjacent (step/trip edge, >1mm)
+Tile hollow ............... tile not bonded to substrate (detected by tapping/sounding)
+Tile loose ................ tile moves when pressed or stepped on
+Tile stain ................ discoloration, rust mark, or stain on tile surface
+Tile scratched ............ scratch line on glazed tile surface
+Tile misaligned ........... tiles not in straight line, uneven layout pattern
+Tile missing .............. gap where tile should be installed
+Tile wrong cut ............ poorly cut tile at edge, rough or uneven cut
+Tile uneven surface ....... tile surface not flat, bowing or warping
+Tile edge exposed ......... raw unfinished tile edge visible at corners or junctions
+Tile spacer visible ....... plastic tile spacer left in grout joint
+Tile pattern mismatch ..... tile pattern or direction inconsistent with neighbours
+Tile adhesive visible ..... adhesive squeezed up through joints or visible on surface
+
+=== GROUT — 8 types ===
+Grout gap ................. missing grout between tiles
+Grout discoloration ....... different colour grout patches, inconsistent colour
+Grout excess .............. grout smeared or dried on tile surface (haze)
+Grout cracked ............. cracked or crumbling grout lines
+Grout incomplete .......... partially grouted, gaps in grout lines
+Grout uneven .............. inconsistent depth or width of grout lines
+Grout recessed ............ grout too deep below tile surface
+Grout stained ............. stain, mould, or discoloration in grout lines
+
+=== PLASTER / WALL — 14 types ===
+Plaster crack ............. line crack in wall or ceiling plaster
+Plaster undulation ........ wavy/uneven surface visible under raking light
+Plaster hollow ............ void behind plaster (drum sound when tapped)
+Plaster bulge ............. raised area pushing outward from wall
+Plaster patch visible ..... visible repair patch, different texture than surrounding
+Plaster rough ............. rough/sandy texture not properly finished/skim-coated
+Plaster nail pop .......... fastener pushing through plaster/drywall surface
+Plaster joint visible ..... plasterboard joint tape visible or ridged
+Plaster corner damaged .... corner bead dented, exposed, or misaligned
+Wall damp stain ........... moisture mark, water stain, discoloration
+Wall mould ................ visible mould or mildew growth on surface
+Wall hole ................. hole from removed fitting, drill hole, unfilled
+Wall bowing ............... wall not plumb, leaning or bowing visibly
+Render crack .............. crack in external render (for villas/townhouses)
+
+=== CEILING — 8 types ===
+Ceiling crack ............. crack in ceiling plaster or drywall
+Ceiling stain ............. water stain or discoloration on ceiling
+Ceiling sagging ........... section of ceiling drooping, dipping, or deflecting
+Ceiling uneven ............ visible level difference in false ceiling panels
+Ceiling access panel ...... access panel not flush, gap around panel, not aligned
+Ceiling paint defect ...... any paint issue specifically on ceiling
+Ceiling joint visible ..... plasterboard joint tape showing through paint
+Ceiling rose gap .......... gap around ceiling light fitting or rose
+
+=== DOOR — 18 types ===
+Door misaligned ........... door not closing flush, uneven gaps around frame
+Door dragging ............. door rubbing on floor when opening or closing
+Door not latching ......... door doesn't stay closed, latch doesn't engage lock
+Door gap excessive ........ too much gap at top, sides, or bottom of door
+Door frame scratch ........ scratch, gouge, or dent on door frame surface
+Door frame gap ............ gap between frame and wall not filled or sealed
+Door hinge loose .......... hinge screws loose, door sagging on hinge side
+Door hinge squeaking ...... hinge needs lubrication, noise on operation
+Door handle loose ......... handle wobbles, has play, or rattles
+Door lock faulty .......... key doesn't turn, deadbolt doesn't engage
+Door stopper missing ...... no door stopper installed, wall at risk of handle impact
+Door closer faulty ........ automatic closer not working, too fast, or slamming
+Door panel scratch ........ scratch, dent, or mark on door leaf surface
+Door seal missing ......... acoustic or draft seal strip missing from frame
+Door glazing defect ....... scratch, crack, or haze in glazed door panel
+Door threshold gap ........ gap at door threshold, not sealed properly
+Door fire label missing ... fire door rating label absent (where required)
+Door ironmongery defect ... letterbox, knocker, peephole, chain — faulty or missing
+
+=== WINDOW — 14 types ===
+Window frame scratch ...... scratch on aluminium or UPVC window frame
+Window seal gap ........... gap in seal or gasket around window frame
+Window glass scratch ...... scratch visible on glass pane
+Window handle faulty ...... handle doesn't lock or unlock properly
+Window track dirty ........ sliding track full of debris, cement, or paint
+Window not closing ........ window doesn't close fully or lock shut
+Window condensation ....... moisture between double-glazed panes (seal failure, fogging)
+Window frame gap .......... gap between frame and wall opening
+Window hinge stiff ........ window difficult to open or close
+Window glass chipped ...... chip or crack in glass pane
+Window restrictor faulty .. safety restrictor not functioning (upper floors)
+Window trickle vent ....... trickle vent missing, stuck, or not functioning
+Window sill defect ........ sill scratched, chipped, not level, or not sealed
+Window caulking gap ....... external caulking missing around window perimeter
+
+=== CABINET / WARDROBE / JOINERY — 18 types ===
+Cabinet door warped ....... door not sitting flat when closed
+Cabinet door gap .......... uneven gap between cabinet doors
+Cabinet hinge loose ....... hinge not holding door properly, sagging
+Cabinet handle loose ...... handle or knob wobbles, not tight
+Cabinet shelf sagging ..... shelf bowing in the middle under no load
+Cabinet interior defect ... scratches, chips, or stains inside cabinet
+Drawer not closing ........ drawer doesn't push in fully or align
+Drawer runner faulty ...... drawer slides rough, sticks, or derails
+Drawer front misaligned ... drawer front not level with adjacent drawers
+Soft-close not working .... soft-close mechanism on door or drawer failed
+Wardrobe door misaligned .. wardrobe door not aligned with adjacent doors
+Wardrobe rail sagging ..... hanging rail drooping or not level
+Vanity unit gap ........... gap between vanity unit and wall
+Countertop chip ........... chip in stone, marble, or composite countertop
+Countertop join gap ....... visible gap or mismatch at countertop joint
+Countertop stain .......... stain on countertop surface
+Backsplash gap ............ gap between backsplash and wall or countertop
+Kickboard gap/missing ..... kitchen kickboard not fitted, gap, or loose
+
+=== SKIRTING / ARCHITRAVE / TRIM — 10 types ===
+Skirting loose ............ pulling away from wall
+Skirting gap .............. gap between skirting and wall or floor
+Skirting scratch .......... scratch, dent, or mark on skirting board
+Skirting joint gap ........ gap between two skirting board pieces at joint
+Skirting not level ........ skirting not straight or level
+Skirting paint defect ..... paint issue on skirting (drip, incomplete, overspray)
+Architrave gap ............ gap between architrave and wall or frame
+Architrave loose .......... architrave pulling away or not fixed
+Threshold strip loose ..... transition strip between rooms loose or missing
+Dado/picture rail defect .. rail not level, gap, loose, or damaged
+
+=== FLOOR — 14 types ===
+Floor tile crack .......... crack in floor tile
+Floor tile loose .......... floor tile moves when stepped on
+Floor tile hollow ......... floor tile not bonded (hollow sound on tap test)
+Floor scratch ............. scratch on floor surface (wood, marble, tile, vinyl)
+Floor stain ............... stain on floor surface
+Floor slope incorrect ..... floor doesn't slope to drain in wet areas / water pools
+Floor level uneven ........ floor surface not level, dip, hump, or step
+Flooring gap .............. gap between floor boards, planks, or tiles
+Flooring loose section .... laminate or wood flooring section moves or clicks
+Floor grout issue ......... grout problem specifically in floor tiles
+Floor squeaking ........... floor creaks or squeaks when walked on
+Floor transition defect ... poor transition between different floor materials
+Floor underfloor heating .. visible heating element, uneven warmth, hot spots
+Floor protective film ..... protective plastic film not removed from floor
+
+=== STAIRCASE — 8 types ===
+Stair tread scratch ....... scratch or mark on stair tread surface
+Stair riser gap ........... gap between riser and tread or wall
+Stair nosing loose ........ stair nose strip loose or not adhered
+Stair baluster loose ...... vertical spindle/baluster not secure, wobbles
+Handrail loose ............ handrail moves when gripped, not secure
+Handrail finish defect .... scratch, dent, or paint defect on handrail
+Stair carpet defect ....... carpet not properly fitted on stairs
+Stair string gap .......... gap between stair string and wall
+
+=== FIXTURE / FITTING — 14 types ===
+Socket loose .............. socket not flush with wall, moves when plugging in
+Socket plate cracked ...... visible crack in socket or switch face plate
+Switch misaligned ......... switch plate not level or plumb
+Switch not working ........ switch doesn't operate the light or fan
+Light fixture loose ....... ceiling or wall light wobbles, not secure
+Light not working ......... light doesn't turn on when switched
+Ceiling rose gap .......... gap around ceiling light rose or fitting
+Towel rail loose .......... towel rail moves when pulled
+Mirror not level .......... mirror hung crooked or not centred
+Mirror clip defect ........ mirror clip missing, loose, or wrong type
+Toilet roll holder loose .. holder wobbles or pulls from wall
+Shower rail defect ........ shower curtain or screen rail loose, scratched
+Soap dish/shelf defect .... shelf loose, cracked, or not level
+Coat hook missing/loose ... hook not fitted or not secure
+
+=== BALCONY / TERRACE / EXTERNAL — 12 types ===
+Balcony slope wrong ....... floor not sloping toward drain (water pools)
+Balcony drain blocked ..... drain cover blocked or not draining
+Balcony rail loose ........ handrail or balustrade not secure, wobbles
+Balcony tile issue ........ tile defect on balcony floor
+Balcony glass scratch ..... scratch on balcony glass panel or balustrade
+Balcony threshold gap ..... gap at balcony door threshold (water ingress risk)
+Balcony ceiling paint ..... paint issue on balcony soffit or ceiling
+Balcony sealant gap ....... sealant missing at balcony perimeter or junction
+External render defect .... crack, bubble, stain, or patch in external render
+External paint defect ..... paint peeling, fading, or incomplete on exterior
+Paving/driveway defect .... cracked, sunken, or loose paving stones
+Garden wall defect ........ garden/boundary wall crack, stain, or leaning
+
+=== WATERPROOFING / MOISTURE — 10 types ===
+Waterproofing leak ........ active water coming through surface
+Waterproofing stain ....... water mark indicating past or slow leak
+Damp patch ................ moisture visible on wall, ceiling, or floor
+Seepage at pipe ........... water seeping around pipe penetration through wall/floor
+Shower tray leak .......... water escaping around shower base or tray
+Window leak trace ......... water marks or staining around window frame
+Condensation issue ........ excessive condensation on surfaces or in cavity
+Rising damp sign .......... tide mark or salt deposits at base of wall
+Mould growth .............. visible mould or mildew (black, green, white spots)
+Efflorescence ............. white crystalline deposits on masonry or concrete surface
+
+=== STRUCTURAL — 8 types ===
+Structural crack .......... wide crack through wall or floor (not just paint layer)
+Concrete spalling ......... concrete breaking away, rebar possibly exposed
+Foundation crack .......... crack in slab or foundation visible
+Settlement crack .......... diagonal crack from corner of door/window opening
+Column/beam defect ........ visible defect in structural element
+Lintel crack .............. crack above window or door opening (lintel failure)
+Load-bearing wall defect .. crack or movement in load-bearing wall
+Subsidence sign ........... uneven floors, diagonal cracks, sticky doors (combined signs)
+
+=== INSULATION / THERMAL — 4 types ===
+Insulation missing ........ insulation gap visible in unfinished space (loft, service void)
+Insulation damaged ........ insulation compressed, torn, or waterlogged
+Thermal bridge ............ cold spot visible on thermal scan (condensation risk)
+Draught detected .......... air movement felt around window, door, or junction
+
+=== CLEANING / GENERAL — 8 types ===
+Construction debris ....... cement, dust, plaster, wood, material left behind
+Protective film left ...... plastic film not removed from surfaces (windows, appliances)
+Sticker residue ........... glue residue from removed labels or stickers
+Cement splash ............. dried cement or mortar spots on finished surfaces
+Metal shavings ............ metal filings from cutting or drilling on surfaces
+Cleaning required ......... general cleaning not done before handover
+Paint splatter general .... paint dots on multiple surfaces throughout room
+Incomplete work ........... clearly unfinished task (missing cover, unfitted item)
+
+IMPORTANT — UNLISTED DEFECTS:
+The categories above cover the most common defects but are NOT exhaustive. If you see a defect that does not fit any listed type, DO NOT force it into the nearest category. Describe exactly what you see in your own words. The goal is accuracy, not fitting into a predefined box. For example, if you see a bird nest in an AC vent, write "Bird nest in AC vent" — do not call it "AC grille blocked". If you see rust on a balcony rail, write "Rust on balcony rail" — do not call it "Balcony rail loose". Trust what your eyes see.
+
+STEP 4 — WRITE DESCRIPTION
+Format: [What is wrong] + [on/at what surface/location]
+Length: 3-8 words. Be SPECIFIC about the material AND location.
+
+CORRECT:
+"Paint run on bedroom wall"
+"Silicone gap at bath edge"
+"Tile crack near floor drain"
+"Scratch on entrance door frame"
+"Grout gap between floor tiles"
+"Plaster undulation on feature wall"
+"Socket loose from kitchen wall"
+"Cabinet hinge loose in wardrobe"
+"Balcony slope incorrect at drain"
+"Damp patch on bathroom ceiling"
+"Threshold strip loose at bedroom"
+"Window seal gap at living room"
+"Countertop chip at kitchen edge"
+"Cornice gap at ceiling junction"
+"Door dragging on floor tiles"
+"Tile lippage at bathroom entrance"
+"Paint bubbling on corridor wall"
+"Stair nosing loose at landing"
+"Tile hollow on kitchen floor"
+"Nail pop on hallway wall"
+"Window condensation in bedroom"
+"Drawer runner faulty in kitchen"
+"External render crack on balcony"
+"Mould growth in bathroom corner"
+"Floor squeaking at bedroom doorway"
+
+WRONG (never write these):
+"Surface marking on wall" ← vague: what KIND of marking?
+"Not connected" ← WHAT is not connected?
+"Yellow stain" ← WHERE? On what surface?
+"Damage" ← not specific at all
+"Issue found" ← meaningless
+"Surface marking" ← completely useless
+"Defect present" ← says nothing
+"Needs attention" ← not a description
+"Poor workmanship" ← opinion, not observable defect
+"Substandard finish" ← not specific
+
+STEP 5 — SEVERITY
+critical — Safety risk or structural failure:
+  Structural crack (wide, through substrate, not just paint)
+  Active water leak or spreading damp patch
+  Mould growth (health hazard)
+  Exposed wiring or bare conductor visible
+  Broken window or door glass
+  Main door lock not functioning
+  Balcony rail unsafe or loose (fall risk)
+  Concrete spalling with exposed rebar
+  Subsidence signs (multiple diagonal cracks + sticky doors)
+  Gas smell or gas leak indicators
+  Missing fire door labels on fire escape routes
+  Asbestos-like material disturbed (older properties)
+
+medium — Visible quality defect, developer must fix:
+  Paint run, drip, peeling, bubbling, or large incomplete area
+  Silicone gap at any wet area junction
+  Tile crack, chip, lippage, or hollow tile
+  Grout gap or grout missing
+  Door or cabinet misaligned or not closing properly
+  Plaster undulation, crack, or nail pop
+  Socket or switch loose or not flush
+  Skirting or architrave loose
+  Window seal gap or condensation between panes
+  Countertop chip
+  Balcony slope wrong (water pooling)
+  Floor tile hollow
+  Threshold strip loose
+  Door dragging on floor
+  Staircase baluster or handrail loose
+  Waterproofing stain
+  Damp patch (not active leak)
+  Any defect the developer must fix before handover
+
+minor — Small cosmetic issue:
+  Small scratch under 5cm on any surface
+  Paint splash or overspray on adjacent surface
+  Dust or construction debris
+  Hairline crack in paint only (not plaster)
+  Slight grout haze on tiles
+  Sticker residue
+  Minor overspray on hardware
+  Protective film left on surface
+  Small scuff mark
+  Cement splash spot
+  Tile spacer visible in joint
+  Minor cleaning required
+
+Return ONLY this JSON (no markdown, no code fences, no explanation):
 {
   "severity": "minor" | "medium" | "critical",
-  "description": "2-5 words, defect noun first",
+  "description": "3-8 words, specific defect + location",
   "confidence": "high" | "medium" | "low"
-}
+}"""
 
-IGNORE COMPLETELY: stickers, coloured dots, numbered labels, tape, markers = inspector's own snagging stickers, NOT defects.
-IGNORE: furniture, personal items, curtains, appliances (unless the appliance itself is damaged).
+MEP_DEFECT_ANALYSIS_PROMPT = """You are a certified property snagging inspector performing MEP (Mechanical, Electrical, Plumbing) system testing during a property handover inspection. This photo documents a MEP test result.
 
-SEVERITY RULES:
-- critical: structural crack through wall/floor, active water leak/damp, exposed wiring, broken glass, lock won't work
-- medium: paint run/drip/large patch missing, silicone gap at wet area, tile crack/grout gap, warped/misaligned door or cabinet, plaster undulation, loose fixture
-- minor: small scratch/scuff under 5cm, paint splash on tile, dust/debris, hairline surface crack, slight overspray
+STEP 1 — FIND WHAT IS BEING TESTED
+The inspector photographs the item being tested. A sticker or marker may indicate the test point — the sticker is NOT a defect, it marks what is being tested.
 
-DESCRIPTION EXAMPLES:
-"Paint run" / "Silicone gap at bath" / "Tile crack" / "Surface marking on frame" / "Grout gap" / "Plaster undulation" / "Skirting loose" / "Paint splash on tile"
+STEP 2 — CLASSIFY THE SYSTEM AND IDENTIFY THE CHECK
 
-NEVER say: damage, risk, poor, bad, broken, compromised.
-Use: surface marking, gap, crack, run, incomplete, loose, misaligned, stained."""
+=== ELECTRICAL — 22 check types ===
+DB panel — tripped breaker, not resetting
+DB panel — missing circuit label, illegible labelling
+DB panel — burn mark, overheating, discoloration
+DB panel — loose wire, open termination, exposed conductor
+DB panel — incorrect breaker size for circuit
+RCD — not tripping on test button press
+Socket — not providing power (dead)
+Socket — loose from wall, moves when plugging in
+Socket — cracked or damaged face plate
+Socket — no earth connection (tester shows fault)
+Socket — reverse polarity
+Socket — USB port not charging
+Switch — not operating light or fan
+Switch — loose or misaligned plate
+Switch — cracked plate
+Dimmer switch — not responding, buzzing, flickering
+Light — not turning on when switched
+Light — flickering or buzzing
+Light — wrong colour temperature (warm vs cool)
+Doorbell — not working or no sound
+Intercom — no picture, no sound, not connecting to door unit
+Data/TV/telephone outlet — no signal, loose plate
 
-MEP_DEFECT_ANALYSIS_PROMPT = """You are a professional property snagging inspector in Dubai testing MEP systems.
-This photo is from a MEP zone (Electrical / HVAC / Plumbing / Wall Moisture).
+=== SMART HOME / AUTOMATION — 6 check types ===
+Smart switch — not connecting to hub or app
+Smart thermostat — not responding, incorrect reading
+Motorised blind/curtain — not responding to control
+Smart lock — not pairing, battery issue
+Home automation panel — not booting, touch unresponsive
+Network point — no connectivity, no signal
 
-MEP zones only flag items that genuinely FAIL a functional test.
-If the item appears functional, return compliant.
+=== HVAC — 16 check types ===
+AC unit — not cooling (blowing warm air)
+AC unit — weak airflow from vents
+AC unit — strange noise (rattling, grinding, buzzing)
+AC unit — water dripping from indoor unit
+AC duct — condensation/sweating (insulation failure)
+AC duct — mould smell from vents
+AC drain — water not draining, overflow, pooling in drip tray
+AC grille — not directing air, loose, rattling, damaged fins
+AC remote/thermostat — not responding, incorrect reading
+Exhaust fan — not spinning
+Exhaust fan — weak suction, not extracting properly
+Exhaust fan — noisy (grinding, rattling)
+Fresh air intake — blocked, dirty filter visible
+AC compressor — vibrating excessively, not starting
+Split unit — ice forming on refrigerant pipes
+Ceiling space — water stains, insulation gaps, duct disconnected
 
-IGNORE COMPLETELY: stickers, coloured dots, numbered labels, tape, markers = inspector's stickers.
+=== PLUMBING — 20 check types ===
+Tap — dripping when closed
+Tap — no hot water delivery
+Tap — low water pressure
+Tap — handle loose or difficult to turn
+Tap — aerator missing or clogged
+Mixer — temperature not mixing properly
+Sink — slow drainage
+Sink — not sealed to countertop (water escapes underneath)
+Basin — not secured to wall, moves
+Basin — cracked or chipped
+Toilet — cistern running continuously after flush
+Toilet — weak flush, not clearing bowl
+Toilet — seat loose, moves side to side
+Toilet — not level, rocks when sat on
+Bidet/shattaf — no water pressure, spray head loose
+Shower — low water pressure
+Shower — head holder loose or broken
+Shower — glass door not sealing, water escaping
+Bathtub — slow drain
+Floor drain — not draining, cover missing, not flush with floor
 
-Return ONLY raw JSON:
+=== PLUMBING SUPPLY / INFRASTRUCTURE — 8 check types ===
+Pipe — visible leak at joint or connection
+Pipe — sweating/condensation (insulation missing)
+Pipe — water hammer noise when tap closed
+Water heater — no hot water, error light, no pilot
+Water heater — pressure relief valve dripping
+Washing machine connection — no water supply or drain not connected
+Dishwasher connection — supply or drain issue
+Isolation valve — seized, leaking, or missing
+
+=== MOISTURE / WATERPROOFING — 10 check types ===
+Wall moisture — elevated reading on moisture meter
+Wall moisture — damp to touch, discoloration
+Ceiling moisture — water stain from above, active drip
+Window moisture — condensation, water tracks around frame
+Pipe penetration moisture — seepage around pipe where it enters wall or floor
+Balcony waterproofing — water not draining outward, pooling at door
+Shower waterproofing — water appearing outside shower area on floor or wall
+Bath waterproofing — water marks on ceiling of room below
+Under-sink moisture — damp, mould, or pooling water under sink cabinet
+Subfloor moisture — moisture detected under floor finish (meter reading)
+
+=== FIRE SAFETY — 8 check types ===
+Smoke detector — not responding to test
+Smoke detector — wrong placement or mounting
+Smoke detector — missing entirely where required
+Sprinkler head — painted over, damaged, or obstructed
+Fire door — seal missing or damaged
+Fire door — closer not working or slamming
+Emergency exit sign — not illuminated
+Fire extinguisher — missing, expired, or wrong type for location
+
+=== GAS (where applicable) — 4 check types ===
+Gas hob — igniter not sparking
+Gas hob — flame irregular or yellow (incomplete combustion)
+Gas supply — smell of gas near connection
+Gas isolation valve — missing or seized
+
+IMPORTANT — UNLISTED DEFECTS:
+The checks above cover the most common MEP items but are NOT exhaustive. If you see a MEP problem that does not match any listed check, DO NOT force it into the nearest category. Describe exactly what you see. Accuracy matters more than fitting a predefined list.
+
+STEP 3 — DECISION
+DEFAULT IS COMPLIANT. Only flag a defect if you can SEE a genuine failure or anomaly.
+If the photo shows a functioning item with no visible problems -> compliant.
+
+STEP 4 — SEVERITY
+compliant — Item works, no visible problem
+critical — Non-functional or safety hazard: no power, no water, active leak, burn/char mark, exposed wiring, gas smell, safety device failure, fire door non-compliant
+medium — Functional but faulty: dripping tap, loose socket, weak AC, poor drainage, condensation, running toilet, low pressure, noisy fan
+minor — Cosmetic only: scratched cover plate, slightly misaligned grille, minor label issue, dust on filter
+
+STEP 5 — DESCRIPTION
+If compliant: "Functional and compliant"
+If defect: "[Specific problem] + [on what item] + [where]" (3-8 words)
+
+CORRECT:
+"DB panel breaker tripped zone 3"
+"Tap dripping at kitchen sink"
+"Socket no power in bedroom"
+"Exhaust fan not operating bathroom"
+"AC unit water dripping indoor"
+"Toilet cistern running continuously"
+"Shower low water pressure"
+"Damp patch near ceiling pipe"
+"Smoke detector not responding"
+"AC drain line overflowing"
+"Floor drain blocked in bathroom"
+"Washing machine tap not connected"
+"Gas hob igniter not sparking"
+"Smart thermostat not responding"
+"Fire door closer slamming"
+"RCD not tripping on test"
+"Pipe leak at basin connection"
+"Window condensation between panes"
+
+WRONG:
+"overheating" ← what is overheating? where?
+"Not working" ← what is not working?
+"Issue found" ← meaningless
+"Leak" ← what is leaking? where?
+"Problem" ← says nothing
+"Faulty" ← what is faulty?
+
+Return ONLY this JSON (no markdown, no code fences):
 {
   "severity": "compliant" | "minor" | "medium" | "critical",
-  "description": "2-5 words or 'Functional and compliant'",
+  "description": "3-8 words, or 'Functional and compliant'",
   "confidence": "high" | "medium" | "low"
-}
-
-MEP severity:
-- compliant: item is functional, no visible defect
-- critical: non-functional (no power, no water, no airflow, active leak)
-- medium: functional but visibly faulty (loose socket, dripping tap, noisy unit)
-- minor: cosmetic MEP only (scratched plate, loose cover, label missing)"""
+}"""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -243,6 +733,18 @@ def delete_last_defect_from_zone(zone_id: str) -> bool:
     if not defects:
         return False
     defects.pop()
+    update_zone(zone_id, defects=defects)
+    return True
+
+
+def update_defect_in_zone(zone_id: str, defect_index: int, **kwargs) -> bool:
+    """Update specific fields of a defect by its index in the zone's defects array."""
+    zone = get_zone_by_id(zone_id)
+    defects = zone.get("defects") or []
+    if defect_index < 0 or defect_index >= len(defects):
+        return False
+    for k, v in kwargs.items():
+        defects[defect_index][k] = v
     update_zone(zone_id, defects=defects)
     return True
 
@@ -396,22 +898,23 @@ def inline_kb(options: list, prefix: str, columns: int = 2) -> InlineKeyboardMar
 
 
 def zone_picker_kb(zones: list, user_id: str) -> InlineKeyboardMarkup:
-    """Build keyboard showing available zones. Taken zones show who has them."""
+    """Build keyboard showing available zones. Done zones can be re-entered for editing."""
     buttons = []
     for z in zones:
         status = z["status"]
         assigned = z.get("assigned_to")
         name = z["name"]
         ztype = " ⚡" if z["type"] == "mep" else ""
+        n_defects = len(z.get("defects") or [])
 
         if status == "done":
-            label = f"✅ {z['zone_number']}. {name}{ztype}"
-            buttons.append([InlineKeyboardButton(text=label, callback_data=f"zone:done:{z['id']}")])
+            extra = f" ({n_defects} defects)" if n_defects else ""
+            label = f"✅ {z['zone_number']}. {name}{ztype}{extra}"
+            buttons.append([InlineKeyboardButton(text=label, callback_data=f"zone:pick:{z['id']}")])
         elif assigned and assigned != user_id:
             label = f"🔒 {z['zone_number']}. {name}{ztype} (taken)"
             buttons.append([InlineKeyboardButton(text=label, callback_data=f"zone:taken:{z['id']}")])
         else:
-            n_defects = len(z.get("defects") or [])
             extra = f" ({n_defects} defects)" if n_defects else ""
             label = f"📍 {z['zone_number']}. {name}{ztype}{extra}"
             buttons.append([InlineKeyboardButton(text=label, callback_data=f"zone:pick:{z['id']}")])
@@ -1043,8 +1546,8 @@ async def _save_defect(query, context, severity: str, description: str) -> int:
 
     buttons = [
         [InlineKeyboardButton("📸 Add another defect", callback_data="after:photo")],
+        [InlineKeyboardButton("✏️ Edit a defect", callback_data="after:edit")],
         [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
-        [InlineKeyboardButton("✅ Finish this zone", callback_data="after:finishzone")],
         [InlineKeyboardButton("🗑 Delete last defect", callback_data="after:delete")],
         [InlineKeyboardButton("🏁 Finish inspection & generate PDF", callback_data="after:finish")],
     ]
@@ -1083,8 +1586,8 @@ async def _save_defect_msg(update: Update, context, severity: str, description: 
 
     buttons = [
         [InlineKeyboardButton("📸 Add another defect", callback_data="after:photo")],
+        [InlineKeyboardButton("✏️ Edit a defect", callback_data="after:edit")],
         [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
-        [InlineKeyboardButton("✅ Finish this zone", callback_data="after:finishzone")],
         [InlineKeyboardButton("🗑 Delete last defect", callback_data="after:delete")],
         [InlineKeyboardButton("🏁 Finish inspection & generate PDF", callback_data="after:finish")],
     ]
@@ -1120,20 +1623,10 @@ async def after_defect_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif action == "switch":
         inspection_id = context.user_data["_inspection_id"]
-        # Release current zone assignment but keep it in_progress
         return await _show_zone_picker(query, context, inspection_id)
 
-    elif action == "finishzone":
-        zone_id = context.user_data["_current_zone_id"]
-        update_zone(zone_id, status="done", assigned_to=None)
-        inspection_id = context.user_data["_inspection_id"]
-        zone = get_zone_by_id(zone_id)
-        n = len(zone.get("defects") or [])
-        await query.edit_message_text(
-            f"✅ <b>Zone {zone['name']}</b> completed with {n} defects.",
-            parse_mode="HTML",
-        )
-        return await _show_zone_picker_query(query, context, inspection_id)
+    elif action == "edit":
+        return await _show_defect_list_for_edit(query, context)
 
     elif action == "delete":
         zone_id = context.user_data["_current_zone_id"]
@@ -1147,7 +1640,7 @@ async def after_defect_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
-                    [InlineKeyboardButton("✅ Finish this zone", callback_data="after:finishzone")],
+                    [InlineKeyboardButton("🏁 Finish inspection", callback_data="after:finish")],
                 ]),
             )
             return DEFECT_PHOTO
@@ -1159,6 +1652,177 @@ async def after_defect_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _try_finish(query, context)
 
     return AFTER_DEFECT
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  EDIT DEFECT
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _show_defect_list_for_edit(query, context) -> int:
+    """Show list of defects in current zone for editing."""
+    zone_id = context.user_data.get("_current_zone_id")
+    zone = get_zone_by_id(zone_id)
+    defects = zone.get("defects") or []
+
+    if not defects:
+        await query.answer("No defects to edit.", show_alert=True)
+        return AFTER_DEFECT
+
+    buttons = []
+    for i, d in enumerate(defects):
+        sev = d.get("severity", "?")
+        desc = d.get("description", "?")[:30]
+        emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡", "compliant": "🟢"}.get(sev, "⚪")
+        buttons.append([InlineKeyboardButton(
+            f"{emoji} #{i+1}: {desc}",
+            callback_data=f"editpick:{i}"
+        )])
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="editpick:back")])
+
+    await query.edit_message_text(
+        f"✏️ <b>Edit defect — {zone['name']}</b>\n\nPick a defect to edit:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return EDIT_PICK_DEFECT
+
+
+async def edit_pick_defect_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """User picked a defect to edit."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":", 1)[1]
+
+    if data == "back":
+        # Go back to after-defect menu by showing zone status
+        zone = get_zone_by_id(context.user_data["_current_zone_id"])
+        n = len(zone.get("defects") or [])
+        buttons = [
+            [InlineKeyboardButton("📸 Add another defect", callback_data="after:photo")],
+            [InlineKeyboardButton("✏️ Edit a defect", callback_data="after:edit")],
+            [InlineKeyboardButton("🔄 Switch zone", callback_data="after:switch")],
+            [InlineKeyboardButton("🗑 Delete last defect", callback_data="after:delete")],
+            [InlineKeyboardButton("🏁 Finish inspection & generate PDF", callback_data="after:finish")],
+        ]
+        await query.edit_message_text(
+            f"📍 <b>Zone: {zone['name']}</b> ({n} defects)\nWhat's next?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return AFTER_DEFECT
+
+    defect_idx = int(data)
+    context.user_data["_edit_defect_idx"] = defect_idx
+
+    zone = get_zone_by_id(context.user_data["_current_zone_id"])
+    defect = (zone.get("defects") or [])[defect_idx]
+    sev = defect.get("severity", "?")
+    desc = defect.get("description", "?")
+    emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡", "compliant": "🟢"}.get(sev, "⚪")
+
+    buttons = [
+        [InlineKeyboardButton("🔴 Critical", callback_data="editsev:critical")],
+        [InlineKeyboardButton("🟠 Medium", callback_data="editsev:medium")],
+        [InlineKeyboardButton("🟡 Minor", callback_data="editsev:minor")],
+        [InlineKeyboardButton("📝 Edit description", callback_data="editsev:editdesc")],
+        [InlineKeyboardButton("🗑 Delete this defect", callback_data="editsev:delete")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="editsev:back")],
+    ]
+
+    await query.edit_message_text(
+        f"✏️ <b>Editing defect #{defect_idx + 1}</b>\n\n"
+        f"Current: {emoji} {sev} — {desc}\n\n"
+        "Change severity, edit description, or delete:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return EDIT_DEFECT_SEV
+
+
+async def edit_defect_sev_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle severity change or other edit actions."""
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":", 1)[1]
+    zone_id = context.user_data["_current_zone_id"]
+    defect_idx = context.user_data.get("_edit_defect_idx", 0)
+
+    if action == "back":
+        return await _show_defect_list_for_edit(query, context)
+
+    if action == "delete":
+        zone = get_zone_by_id(zone_id)
+        defects = zone.get("defects") or []
+        if 0 <= defect_idx < len(defects):
+            defects.pop(defect_idx)
+            update_zone(zone_id, defects=defects)
+        zone = get_zone_by_id(zone_id)
+        n = len(zone.get("defects") or [])
+        await query.edit_message_text(
+            f"🗑 Defect deleted. Zone <b>{zone['name']}</b> now has {n} defects.",
+            parse_mode="HTML",
+        )
+        if n > 0:
+            return await _show_defect_list_for_edit(query, context)
+        # No defects left — back to photo
+        inspection_id = context.user_data["_inspection_id"]
+        return await _show_zone_picker_query(query, context, inspection_id)
+
+    if action == "editdesc":
+        await query.edit_message_text("📝 Type the new description:")
+        return EDIT_DEFECT_DESC
+
+    # Severity change
+    new_sev = action  # critical / medium / minor
+    update_defect_in_zone(zone_id, defect_idx, severity=new_sev)
+
+    zone = get_zone_by_id(zone_id)
+    defect = (zone.get("defects") or [])[defect_idx]
+    emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡"}.get(new_sev, "⚪")
+
+    await query.edit_message_text(
+        f"✅ Severity updated to {emoji} <b>{new_sev}</b>\n\n"
+        f"Defect #{defect_idx + 1}: {defect.get('description', '?')}",
+        parse_mode="HTML",
+    )
+    return await _show_defect_list_for_edit(query, context)
+
+
+async def edit_defect_desc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive new description for a defect."""
+    new_desc = update.message.text.strip()
+    zone_id = context.user_data["_current_zone_id"]
+    defect_idx = context.user_data.get("_edit_defect_idx", 0)
+
+    update_defect_in_zone(zone_id, defect_idx, description=clean_unicode(new_desc))
+
+    zone = get_zone_by_id(zone_id)
+    defect = (zone.get("defects") or [])[defect_idx]
+    sev = defect.get("severity", "?")
+    emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡"}.get(sev, "⚪")
+
+    await update.message.reply_text(
+        f"✅ Description updated\n\n"
+        f"Defect #{defect_idx + 1}: {emoji} {sev} — {new_desc}",
+        parse_mode="HTML",
+    )
+
+    # Show defect list again
+    n = len(zone.get("defects") or [])
+    buttons = []
+    for i, d in enumerate(zone.get("defects") or []):
+        s = d.get("severity", "?")
+        desc = d.get("description", "?")[:30]
+        em = {"critical": "🔴", "medium": "🟠", "minor": "🟡", "compliant": "🟢"}.get(s, "⚪")
+        buttons.append([InlineKeyboardButton(f"{em} #{i+1}: {desc}", callback_data=f"editpick:{i}")])
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="editpick:back")])
+
+    await update.message.reply_text(
+        f"✏️ <b>Edit defect — {zone['name']}</b> ({n} defects)\n\nPick another defect or go back:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return EDIT_PICK_DEFECT
 
 
 async def _show_zone_picker_msg(update: Update, context, inspection_id: str) -> int:
@@ -1259,11 +1923,11 @@ async def _try_finish(query, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Save data to Supabase anyway
         update_inspection(inspection_id, status="complete")
 
+        err_text = str(e).replace("<", "&lt;").replace(">", "&gt;")
         await query.message.reply_text(
-            f"❌ PDF generation failed:\n\n{e}\n\n"
+            f"❌ PDF generation failed:\n\n{err_text}\n\n"
             f"Your data is safe in Supabase.\n"
-            f"Run locally: <code>python3 generate_from_supabase.py {meta.get('unit', '?')}</code>",
-            parse_mode="HTML",
+            f"Run locally: python3 generate_from_supabase.py {meta.get('unit', '?')}",
         )
         return ConversationHandler.END
 
@@ -1399,8 +2063,8 @@ async def _build_pdf(meta: dict, zones: list, sev_counts: dict, total: int, ai_t
     out_pdf = os.path.join(REPORT_DIR, f"Report_{proj_s}_{unit_s}_{date_s}.pdf")
     tmp_py = os.path.join(REPORT_DIR, "_generate_tmp.py")
 
-    # Set output path
-    new_script = re.sub(r'OUTPUT_PDF\s*=\s*.*', f'OUTPUT_PDF = r"{out_pdf}"', new_script)
+    # Set output path — template uses variable named OUT
+    new_script = re.sub(r'^OUT\s*=\s*.*$', f'OUT = r"{out_pdf}"', new_script, count=1, flags=re.MULTILINE)
 
     with open(tmp_py, "w", encoding="utf-8") as f:
         f.write(new_script)
@@ -1513,6 +2177,17 @@ def build_app():
             AFTER_DEFECT: [
                 CallbackQueryHandler(after_defect_handler, pattern=r"^after:"),
                 MessageHandler(filters.PHOTO, defect_photo),  # Quick photo = add another
+            ],
+
+            # Edit defect
+            EDIT_PICK_DEFECT: [
+                CallbackQueryHandler(edit_pick_defect_handler, pattern=r"^editpick:"),
+            ],
+            EDIT_DEFECT_SEV: [
+                CallbackQueryHandler(edit_defect_sev_handler, pattern=r"^editsev:"),
+            ],
+            EDIT_DEFECT_DESC: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_defect_desc_handler),
             ],
         },
         fallbacks=[
