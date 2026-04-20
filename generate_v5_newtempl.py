@@ -14,9 +14,10 @@ from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image
 
 # ── PATHS ─────────────────────────────────────────────────────────────────────
-TPL   = "/home/claude/snaggit/tpl"
-FONTS = "/home/claude/snaggit/fonts"
-SRC   = "/home/claude/snaggit/Cedar_308_extracted"
+import os as _os
+TPL   = _os.environ.get("TPL_DIR", "/app/tpl_v2")
+FONTS = _os.environ.get("FONTS_DIR", "/app/fonts")
+SRC   = _os.environ.get("SRC_DIR", "/app/data/photos")
 OUT   = "/mnt/user-data/outputs/Cedar_Building2_Unit308_v5.pdf"
 
 PW, PH = 595, 842   # A4 pt
