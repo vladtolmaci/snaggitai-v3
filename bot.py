@@ -1967,23 +1967,48 @@ async def _try_finish(query, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"📸 {photo_count} photos | {len(zones)} zones"
     )
 
+    sent_count = 0
+    fail_count = 0
     for member in members:
-        try:
-            chat_id = int(member["user_id"])
-            await context.bot.send_document(
-                chat_id=chat_id,
-                document=open(pdf_path, "rb"),
-                filename=os.path.basename(pdf_path),
-                caption=summary,
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send PDF to {member['user_id']}: {e}")
+        chat_id = int(member["user_id"])
+        sent = False
+        for attempt in range(3):
+            try:
+                with open(pdf_path, "rb") as pdf_file:
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=pdf_file,
+                        filename=os.path.basename(pdf_path),
+                        caption=summary,
+                        parse_mode="HTML",
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=30,
+                    )
+                sent_count += 1
+                sent = True
+                logger.info(f"PDF sent to {chat_id}")
+                break
+            except Exception as e:
+                logger.warning(f"PDF send attempt {attempt+1} to {chat_id} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+        if not sent:
+            fail_count += 1
+            logger.error(f"PDF delivery to {chat_id} failed after 3 attempts")
 
-    await query.message.reply_text(
-        f"{summary}\n\n📄 PDF sent to {len(members)} team member(s).",
-        parse_mode="HTML",
-    )
+    if fail_count > 0:
+        await query.message.reply_text(
+            f"{summary}\n\n"
+            f"📄 PDF sent to {sent_count}/{len(members)} member(s).\n"
+            f"❌ {fail_count} delivery failed — check logs.",
+            parse_mode="HTML",
+        )
+    else:
+        await query.message.reply_text(
+            f"{summary}\n\n📄 PDF sent to {sent_count} member(s).",
+            parse_mode="HTML",
+        )
     return ConversationHandler.END
 
 
@@ -2139,6 +2164,11 @@ async def _build_pdf(meta: dict, zones: list, sev_counts: dict, total: int, ai_t
     if not os.path.exists(out_pdf):
         raise RuntimeError(f"PDF not found at {out_pdf}")
 
+    file_size = os.path.getsize(out_pdf)
+    logger.info(f"PDF generated: {out_pdf} ({file_size} bytes)")
+    if file_size < 100:
+        raise RuntimeError(f"PDF file too small ({file_size} bytes) — likely empty/corrupt")
+
     return out_pdf
 
 
@@ -2176,6 +2206,9 @@ def build_app():
         .get_updates_read_timeout(30)
         .get_updates_write_timeout(30)
         .get_updates_connect_timeout(15)
+        .read_timeout(60)
+        .write_timeout(60)
+        .connect_timeout(30)
         .build()
     )
 
