@@ -1417,8 +1417,16 @@ async def defect_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     ]
     if is_mep and severity == "compliant":
         buttons = [
-            [InlineKeyboardButton(f"✅ Confirm: 🟢 compliant", callback_data="ai:confirm")],
+            [InlineKeyboardButton("✅ Confirm: 🟢 compliant", callback_data="ai:confirm")],
             [InlineKeyboardButton("⚠️ Actually a defect", callback_data="ai:severity")],
+            [InlineKeyboardButton("📝 Edit description", callback_data="ai:desc")],
+        ]
+    elif is_mep and severity != "compliant":
+        buttons = [
+            [InlineKeyboardButton(f"✅ Confirm: {sev_emoji} {severity} — {desc}", callback_data="ai:confirm")],
+            [InlineKeyboardButton("🟢 Change to compliant", callback_data="ai:compliant")],
+            [InlineKeyboardButton("✏️ Change severity", callback_data="ai:severity")],
+            [InlineKeyboardButton("📝 Edit description", callback_data="ai:desc")],
         ]
 
     await update.message.reply_text(
@@ -1464,10 +1472,18 @@ async def ai_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         result = context.user_data.get("_ai_result", {})
         return await _save_defect(query, context, result.get("severity", "medium"), result.get("description", "?"))
 
+    elif action == "compliant":
+        # MEP: override to compliant
+        result = context.user_data.get("_ai_result", {})
+        desc = result.get("description", "Functional and compliant")
+        return await _save_defect(query, context, "compliant", "Functional and compliant")
+
     elif action == "severity":
+        is_mep = context.user_data.get("_is_mep", False)
+        options = ["compliant", "minor", "medium", "critical"] if is_mep else SEVERITY_OPTIONS
         await query.edit_message_text(
             "Select severity manually:",
-            reply_markup=inline_kb(SEVERITY_OPTIONS, "sev"),
+            reply_markup=inline_kb(options, "sev"),
         )
         return DEFECT_SEVERITY
 
@@ -1484,6 +1500,12 @@ async def defect_severity(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     severity = query.data.split(":", 1)[1]
     context.user_data["_manual_severity"] = severity
+
+    # If compliant selected, auto-set description and save immediately
+    if severity == "compliant":
+        ai = context.user_data.get("_ai_result")
+        desc = ai.get("description", "Functional and compliant") if ai else "Functional and compliant"
+        return await _save_defect(query, context, "compliant", desc)
 
     # Check if we have AI description to use
     ai = context.user_data.get("_ai_result")
@@ -1721,6 +1743,7 @@ async def edit_pick_defect_handler(update: Update, context: ContextTypes.DEFAULT
     emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡", "compliant": "🟢"}.get(sev, "⚪")
 
     buttons = [
+        [InlineKeyboardButton("🟢 Compliant", callback_data="editsev:compliant")],
         [InlineKeyboardButton("🔴 Critical", callback_data="editsev:critical")],
         [InlineKeyboardButton("🟠 Medium", callback_data="editsev:medium")],
         [InlineKeyboardButton("🟡 Minor", callback_data="editsev:minor")],
@@ -1773,12 +1796,12 @@ async def edit_defect_sev_handler(update: Update, context: ContextTypes.DEFAULT_
         return EDIT_DEFECT_DESC
 
     # Severity change
-    new_sev = action  # critical / medium / minor
+    new_sev = action  # critical / medium / minor / compliant
     update_defect_in_zone(zone_id, defect_idx, severity=new_sev)
 
     zone = get_zone_by_id(zone_id)
     defect = (zone.get("defects") or [])[defect_idx]
-    emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡"}.get(new_sev, "⚪")
+    emoji = {"critical": "🔴", "medium": "🟠", "minor": "🟡", "compliant": "🟢"}.get(new_sev, "⚪")
 
     await query.edit_message_text(
         f"✅ Severity updated to {emoji} <b>{new_sev}</b>\n\n"
@@ -1967,33 +1990,65 @@ async def _try_finish(query, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def _build_pdf(meta: dict, zones: list, sev_counts: dict, total: int, ai_texts: dict) -> str:
     """Build PDF using generate_v5_newtempl.py template injection."""
 
-    # Build areas list
+    # Build areas list — separate regular and MEP zones
     areas_list = []
+    mep_areas_list = []
+
     for z in zones:
-        defects = []
-        for d in (z.get("defects") or []):
-            if d.get("severity") == "compliant":
-                continue
-            defects.append({
-                "sev": d.get("severity", "minor"),
-                "desc": trunc(d.get("description", ""), 80),
-                "photo": d.get("photo_path", ""),
+        is_mep_zone = z.get("type") == "mep"
+
+        if is_mep_zone:
+            # MEP zones: include ALL items (compliant + defects) as checks
+            checks = []
+            mep_defects_count = 0
+            for d in (z.get("defects") or []):
+                sev = d.get("severity", "compliant")
+                desc = trunc(d.get("description", ""), 80)
+                checks.append({
+                    "sev": sev,
+                    "desc": desc,
+                    "photo": d.get("photo_path", ""),
+                })
+                if sev != "compliant":
+                    mep_defects_count += 1
+
+            if mep_defects_count > 0:
+                obs = f"The {z['name']} system has {mep_defects_count} issues noted requiring attention."
+            else:
+                obs = f"All {z['name']} systems tested and found compliant. No issues detected."
+
+            mep_areas_list.append({
+                "num": str(z["zone_number"]),
+                "name": z["name"],
+                "defects": checks,
+                "checks": checks,
+                "obs": obs,
             })
-
-        # Build observation for zone
-        n = len(defects)
-        if n > 0:
-            items = ", ".join(d["desc"] for d in defects[:5])
-            obs = f"The {z['name']} area has {n} comments noted. Comments include {items}. Mentioned comments should be rectified prior to handover."
         else:
-            obs = f"Overall, the {z['name']} is in good condition. No comments were noted during inspection."
+            # Regular zones: only include actual defects (not compliant)
+            defects = []
+            for d in (z.get("defects") or []):
+                if d.get("severity") == "compliant":
+                    continue
+                defects.append({
+                    "sev": d.get("severity", "minor"),
+                    "desc": trunc(d.get("description", ""), 80),
+                    "photo": d.get("photo_path", ""),
+                })
 
-        areas_list.append({
-            "num": str(z["zone_number"]),
-            "name": z["name"],
-            "defects": defects,
-            "obs": obs,
-        })
+            n = len(defects)
+            if n > 0:
+                items = ", ".join(d["desc"] for d in defects[:5])
+                obs = f"The {z['name']} area has {n} comments noted. Comments include {items}. Mentioned comments should be rectified prior to handover."
+            else:
+                obs = f"Overall, the {z['name']} is in good condition. No comments were noted during inspection."
+
+            areas_list.append({
+                "num": str(z["zone_number"]),
+                "name": z["name"],
+                "defects": defects,
+                "obs": obs,
+            })
 
     # Texts
     summary_obs = ai_texts.get("summary_obs") or (
@@ -2032,7 +2087,7 @@ async def _build_pdf(meta: dict, zones: list, sev_counts: dict, total: int, ai_t
                              "compliant": sev_counts.get("compliant", 0)}) + "\n\n"
         "SUMMARY_OBS = " + json.dumps(summary_obs, ensure_ascii=True) + "\n\n"
         "AREAS = " + to_py(areas_list) + "\n\n"
-        "MEP_AREAS = []\n\n"
+        "MEP_AREAS = " + to_py(mep_areas_list) + "\n\n"
         "GENERAL_COND = " + json.dumps(general_cond, ensure_ascii=True) + "\n\n"
         "URGENT = " + json.dumps(urgent, ensure_ascii=True) + "\n"
     )
