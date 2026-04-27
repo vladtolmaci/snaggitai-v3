@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN      = os.environ.get("BOT_TOKEN", "")
-ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY", "")
+OPENAI_KEY     = os.environ.get("OPENAI_KEY", "")
 SUPABASE_URL   = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY   = os.environ.get("SUPABASE_KEY", "")
 REPORT_DIR     = os.environ.get("REPORT_DIR", "/app/data")
@@ -783,25 +783,24 @@ def get_user_active_inspection(user_id: str) -> dict | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def analyse_photo_with_ai(photo_bytes: bytes, is_mep: bool = False) -> dict:
-    """Send photo to Claude Vision, return parsed JSON."""
+    """Send photo to OpenAI GPT-4o Vision, return parsed JSON."""
     image_data = base64.standard_b64encode(photo_bytes).decode("utf-8")
     prompt = MEP_DEFECT_ANALYSIS_PROMPT if is_mep else DEFECT_ANALYSIS_PROMPT
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.openai.com/v1/chat/completions",
             headers={
-                "x-api-key": ANTHROPIC_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
+                "Authorization": f"Bearer {OPENAI_KEY}",
+                "Content-Type": "application/json",
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "gpt-4o",
                 "max_tokens": 300,
                 "messages": [{
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}", "detail": "high"}},
                         {"type": "text", "text": prompt},
                     ],
                 }],
@@ -809,11 +808,11 @@ async def analyse_photo_with_ai(photo_bytes: bytes, is_mep: bool = False) -> dic
         )
         data = resp.json()
 
-        if "content" not in data:
-            logger.error(f"AI response missing 'content': {data}")
+        if "choices" not in data or not data["choices"]:
+            logger.error(f"OpenAI response missing 'choices': {data}")
             return {"severity": "medium", "description": "AI analysis unavailable", "confidence": "low"}
 
-        text = data["content"][0]["text"].strip()
+        text = data["choices"][0]["message"]["content"].strip()
         # Strip markdown code fences
         if text.startswith("```"):
             text = text.split("```")[1]
@@ -863,20 +862,19 @@ async def generate_ai_texts(meta: dict, zones: list) -> dict:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
+                "https://api.openai.com/v1/chat/completions",
                 headers={
-                    "x-api-key": ANTHROPIC_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
+                    "Authorization": f"Bearer {OPENAI_KEY}",
+                    "Content-Type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "gpt-4o",
                     "max_tokens": 600,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             )
             data = resp.json()
-            text = data["content"][0]["text"].strip()
+            text = data["choices"][0]["message"]["content"].strip()
             if text.startswith("```"):
                 text = text.split("```")[1]
                 if text.startswith("json"):
